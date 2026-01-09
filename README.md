@@ -1,34 +1,28 @@
-# Video Agent Pipeline
+# Auto Video Workflow (Claude Agent SDK)
 
-基于 Claude Agent SDK 的自动化视频流水线系统。
+## Quickstart
 
-## 项目结构
-
-```
-video_agent/
-├── main.py                  # 入口点
-├── agents/                  # Agent 定义 (System Prompts)
-│   └── video_ops/
-│       ├── director.yaml    # 总编排 Agent
-│       ├── scout.yaml       # 选品 Agent (Node 1)
-│       └── editor.yaml      # 剪辑 Agent (Node 4)
-├── skills/                  # 工具/技能封装
-│   └── video_processing/
-│       ├── __init__.py
-│       ├── downloader.py    # yt-dlp 封装
-│       ├── transcriber.py   # faster-whisper 封装
-│       └── renderer.py      # ffmpeg 封装
-├── workspace/               # 运行时工作目录
-└── assets/
-    └── bgm/                 # 背景音乐资源
-```
-
-## 快速开始
+1. Install dependencies:
 
 ```bash
-# 安装依赖
-pip install -r requirements.txt
+npm install
+```
 
-# 运行主程序
-python main.py
+2. Set environment variables:
+
+```bash
+export ANTHROPIC_API_KEY="your-key"
+```
+
+3. Run once:
+
+```bash
+npm run dev -- --config config.yaml
+```
+
+## Agent Smoke Test
+
+```bash
+export ANTHROPIC_API_KEY="your-key"
+npm run smoke -- --prompt "用一句话解释什么是幂等"
 ```

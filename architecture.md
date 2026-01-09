@@ -1,290 +1,301 @@
+# Claude Agent 视频自动化流水线（MVP v0.1）
 
+目标：在**无人值守**的情况下作为长期服务运行，通过定时触发从指定 YouTube `channel_id`（`UC...`）拉取最新视频，自动产出可直接上传的视频平台交付物：
 
-# Claude Agent 视频自动化流水线设计
+- `final_output.mp4`
+- `metadata.json`
+- `thumbnail.jpg`
 
-## 1. 核心架构图 (Workflow Architecture)
-本工作流采用 **Linear Chain with Feedback Loops**（带反馈的线性链）模式。Agent 不仅是执行者，更是每个节点的质量检查员。
+MVP 约束：
+
+- 部署：`Linux + Docker`，**宿主机定时触发**，容器每次“跑一轮然后退出”
+- 选品：只做 **Channel 白名单 + 最新 N 个**
+- 去重：视频一旦进入系统（存在 `workspace/jobs/{video_id}/job.json`），**不再重复处理**
+- 无并发：单进程顺序处理（时间换空间）
+- 视频长度：下载阶段过滤 `> 5 分钟`（`> 300s`）的视频
+- ASR：必须支持 CPU fallback；MVP 不处理长视频切块拼接
+- 上传：不做自动化上传，只产出交付物并落盘等待验收
+
+时区：`Asia/Shanghai`
+
+---
+
+## 1. 运行与部署模型
+
+### 1.1 定时触发（在容器外）
+
+- 由宿主机 `cron` / `systemd timer` 定时执行容器命令
+- “触发频率/触发时间”由宿主机定时器配置；“每次处理多少视频”等业务参数由应用配置文件控制
+
+### 1.2 一次性 Worker 模式（Run-once）
+
+- 容器启动 → 读取配置 → 拉取 RSS → 选择候选视频 → 逐个处理 → 产出交付物 → 退出
+- 优点：最容易做到可恢复/可观测/可运维（失败重跑 = 下次定时再跑）
+
+---
+
+## 2. 配置与目录结构
+
+### 2.1 `config.yaml`（建议字段）
+
+```yaml
+timezone: Asia/Shanghai
+
+max_videos_per_run: 1
+max_duration_seconds: 300
+retries_max: 5
+
+channels:
+  - UCxxxxxxxxxxxxxxxxxxxxxx
+  - UCyyyyyyyyyyyyyyyyyyyyyy
+
+paths:
+  workspace: workspace
+  jobs_dir: workspace/jobs
+  deliveries_dir: workspace/deliveries
+  state_dir: workspace/state
+  logs_dir: workspace/logs
+
+render:
+  font_path: /usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc
+  subtitle_fontsize: 24
+  bgm_path: null # MVP: 可为空
+```
+
+### 2.2 Workspace 目录建议
+
+```
+workspace/
+  jobs/
+    {video_id}/
+      job.json
+      source/
+        video.mp4
+        video.info.json
+        thumbnail.*          # yt-dlp 写入，后续统一为 jpg
+      asr/
+        audio.wav
+        source_segments.json
+        source.srt
+      nlp/
+        translated_segments.json
+        translated.srt
+      render/
+        final_output.mp4
+      dist/
+        metadata.json
+        thumbnail.jpg
+  deliveries/
+    {run_id}/
+      {video_id}/
+        final_output.mp4
+        metadata.json
+        thumbnail.jpg
+  state/
+    download_archive.txt
+  logs/
+    {run_id}.log
+```
+
+### 2.3 `run_id`
+
+每次运行生成一个批次 ID（用于验收与回溯），例如：`20260109_153000+0800`（`Asia/Shanghai`）。
+
+---
+
+## 3. 幂等与重试（MVP 规则）
+
+### 3.1 `job.json`（最小状态机）
+
+`job.json` 用于“出现过就不再做”、失败记录与交付物索引。
+
+最小字段建议：
+
+```json
+{
+  "video_id": "dQw4w9WgXcQ",
+  "channel_id": "UCxxxxxxxxxxxxxxxxxxxxxx",
+  "source_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "created_at": "2026-01-09T15:30:00+08:00",
+  "updated_at": "2026-01-09T15:42:10+08:00",
+  "status": "succeeded",
+  "attempts": 3,
+  "step": "deliver",
+  "last_error": null,
+  "artifacts": {
+    "final_output": "workspace/jobs/.../render/final_output.mp4",
+    "metadata": "workspace/jobs/.../dist/metadata.json",
+    "thumbnail": "workspace/jobs/.../dist/thumbnail.jpg"
+  }
+}
+```
+
+### 3.2 去重规则
+
+- 若 `workspace/jobs/{video_id}/job.json` 存在：直接跳过（MVP 不做续跑/恢复）
+- 若同一 `video_id` 再次出现在 RSS：仍跳过
+
+### 3.3 重试与失败处理
+
+- 每个视频最多重试 `retries_max=5` 次
+- 超过重试次数后：`status=failed`，记录 `last_error`，跳过继续处理下一个候选（如果本次 run 还允许处理更多）
+
+---
+
+## 4. 核心架构图（Linear Chain with Checks）
 
 ```mermaid
 graph TD
-    Start[触发: 定时任务 / 手动指令] --> Node1[节点 1: 智能选品与获取]
-    Node1 -->|Check: 视频是否已存在?| Node2[节点 2: 听觉智能 ASR]
-    Node2 -->|Check: 字幕格式是否合法?| Node3[节点 3: 语义处理 Translation]
-    Node3 -->|Check: 翻译文本长度匹配?| Node4[节点 4: 视听工程 FFmpeg]
-    Node4 -->|Check: 最终视频能否播放?| Node5[节点 5: 封装与元数据]
-    Node5 --> Node6[节点 6: 人工/自动发布]
-    
-    subgraph "Claude Agent SDK Environment"
-        Tools[MCP Server / CLI Tools]
-        Memory[FileSystem / Workspace]
-    end
-    
-    Node1 -.->|调用| Tools
-    Node2 -.->|调用| Tools
-    Node3 -.->|调用| Tools
-    Node4 -.->|调用| Tools
+    Trigger[宿主机定时触发] --> Run[容器 Run-once 启动]
+    Run --> Discover[节点 1: RSS 拉取 + 最新 N 个]
+    Discover -->|Check: job.json 存在则跳过| Preflight[节点 2: yt-dlp 预检(<=300s/非直播)]
+    Preflight -->|Check: 不满足则记录并跳过| Download[节点 3: 下载/落盘(info/thumbnail)]
+    Download --> ASR[节点 4: ASR(faster-whisper, CPU/GPU 自适应)]
+    ASR --> Translate[节点 5: 翻译/本地化(JSON→SRT)]
+    Translate --> Render[节点 6: 渲染(字幕烧录+响度标准化+可选BGM)]
+    Render --> Package[节点 7: metadata + thumbnail 整理]
+    Package --> Deliver[节点 8: 交付到 deliveries/{run_id}]
 ```
 
 ---
 
-## 2. 详细节点设计
+## 5. 节点设计（MVP 细化）
 
-### 节点 1: 智能选品与获取 (Smart Discovery & Ingestion)
-**目标**：从互联网海量内容中精准捕获"高价值"视频（近期发布、数据表现好、来源可靠）。
+### 节点 1：RSS 拉取 + 最新 N 个
 
-**输入**：
-- **Source A (白名单)**：预设高质量频道列表 (e.g., `@PeterSantonello`, `@SerpentZA`)
-- **Source B (探索)**：核心关键词 (e.g., `"China EV Review"`, `"Shenzhen 4K Walk"`)
+输入：`channel_id` 白名单（`UC...`）
 
-**Agent 动作 (双层漏斗机制)**：
-1. **元数据侦察 (Metadata Scouting)**  
-   - 使用工具获取视频列表 JSON 元数据
-   - 命令：`yt-dlp --dump-json --flat-playlist --playlist-end 5 {url}`
-   - 优势：仅需几秒获取标题/时长/播放量，不消耗流量
+实现建议：
 
-2. **LLM 审计 (Auditing)**  
-   - 过滤条件：
-     - 时长 < 60 秒的 Shorts
-     - 播放量 < 10,000（除非是 1 小时内新发布）
-     - 无关主题（基于标题识别）
+- RSS：`https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}`
+- 合并所有白名单的条目后按发布时间倒序，取最新 `max_videos_per_run=N` 个
+- 取到 `video_id` 后先检查 `job.json`，存在则跳过
 
-3. **执行下载 (Ingestion)**  
-   - 命令：`yt-dlp -f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]" --write-comments --o "workspace/%(id)s/video.%(ext)s" {video_url}`
+输出：候选 `video_id` 列表
 
-**工具集**：
-```python
-# 封装技能
-def search_videos(query: str, limit: int = 5) -> List[VideoMeta]:
-    """ytsearchN 封装，含过滤器"""
-    return run_cli(f"yt-dlp --match-filter 'original_url!*=/shorts/ & duration > 120' --dump-json {query}")
+### 节点 2：yt-dlp 预检（过滤 > 5 分钟）
+
+目的：在下载前拿到 `duration` 等元信息，避免拉取长视频。
+
+实现建议：
+
+- `yt-dlp --dump-json --skip-download {video_url}`
+- 过滤条件（MVP）：
+  - `duration <= max_duration_seconds`（默认 300）
+  - `is_live != true`（或 `live_status` 不为 live）
+  - 可选：排除 `shorts` URL
+
+输出：预检通过的 `video_url` 与元信息（可写入 `video.info.json` 供后续复用）
+
+### 节点 3：下载与落盘（不抓评论）
+
+目标：下载视频 + 基础元信息 + 封面图（MVP 不抓评论）。
+
+实现建议（示例命令要点）：
+
+- `--download-archive workspace/state/download_archive.txt`（避免重复下载）
+- `-f "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]"`（优先 MP4）
+- `--write-info-json`（生成 `video.info.json`）
+- `--write-thumbnail`（下载封面图）
+- 输出目录：`workspace/jobs/{video_id}/source/`
+
+输出：
+
+- `video.mp4`
+- `video.info.json`
+- `thumbnail.*`
+
+### 节点 4：ASR（CPU/GPU 自适应）
+
+目标：产出稳定的时间轴文本与可机器处理的 segments。
+
+实现建议：
+
+1. FFmpeg 转音频：`16kHz, mono, wav`（提升一致性）
+2. faster-whisper（策略）：
+   - 优先 GPU；无 GPU 自动降级 CPU（`compute_type="int8"`）
+   - 开启 VAD（减少静音段误识别）
+3. 输出两份：
+   - `source_segments.json`：`[{start,end,text}, ...]`
+   - `source.srt`：用于人工检查/对照
+
+### 节点 5：翻译/本地化（JSON 中间层 → SRT）
+
+目标：不改时间戳，只改文本；确保产物在无人值守下也能稳定进入渲染环节。
+
+策略（MVP）：
+
+- 输入：`source_segments.json`
+- 输出：`translated_segments.json`（结构化）与 `translated.srt`
+- LLM 输出使用 JSON Schema（Claude Agent SDK 的 `output_format`），避免直接生成 SRT 导致格式错误
+- “屏幕占用”控制（MVP 简化规则）：
+  - 每条字幕最多 2 行
+  - 每行最多 16–18 个中文字符（可配置）
+  - 超出：优先断行；仍超则触发一次“压缩改写更短”重写（仍不改时间戳）
+
+### 节点 6：渲染（字幕烧录 + 响度标准化 + 可选 BGM）
+
+目标：产出可直接上传的 `final_output.mp4`，并做最低限度的质量保障。
+
+实现建议：
+
+- 字幕烧录：FFmpeg `subtitles`（依赖 `libass`）+ 指定中文字体（容器内固定路径）
+- 响度标准化：`loudnorm`（MVP 先用单遍；后续可升级双遍）
+- BGM：MVP 先留接口（配置中 `bgm_path` 可为空）
+- 最终校验：`ffprobe` 可正常读取时长与音视频流（作为“可播放”的最低门槛）
+
+输出：`workspace/jobs/{video_id}/render/final_output.mp4`
+
+### 节点 7：Packaging（metadata + thumbnail）
+
+metadata（MVP 初版建议字段）：
+
+```json
+{
+  "title": "…",
+  "description": "…",
+  "tags": ["…", "…"],
+  "language": "zh-CN",
+  "source_url": "…",
+  "source_channel_id": "…"
+}
 ```
 
-**输出**：
-- `workspace/{id}/video.mp4`
-- `workspace/{id}/video.info.json` (含评论数据)
+thumbnail（MVP）：
+
+- 优先使用 yt-dlp 下载的原视频封面
+- 如封面不可用：从视频中截取关键帧（例如 2–5 秒处）作为兜底
+
+输出：`workspace/jobs/{video_id}/dist/metadata.json`、`workspace/jobs/{video_id}/dist/thumbnail.jpg`
+
+### 节点 8：交付（落盘等待验收）
+
+- 将 `final_output.mp4`、`metadata.json`、`thumbnail.jpg` 复制到：
+  - `workspace/deliveries/{run_id}/{video_id}/`
+- 终端输出交付路径；不做自动上传
 
 ---
 
-### 节点 2: 听觉智能 (Audio Intelligence)
-**目标**：将音频转换为精确时间轴文本（SRT格式）。
+## 6. Claude Agent SDK 落地方式（推荐）
 
-**Agent 动作**：
-1. 从视频剥离音频
-2. 调用 `transcribe_audio_to_srt` 工具（基于 faster-whisper）
-3. **关键策略**：使用 `large-v3` 模型保证识别精度
+推荐：**TypeScript 业务编排 + `query()` 做“纯函数步骤”**。
 
-**工具集**：
-- `ffmpeg_extract_audio`
-- `whisper_local` (faster-whisper)
+- 编排（RSS、状态机、重试、文件落盘、ffmpeg/yt-dlp 调用）由应用代码负责，可测试、可运维。
+- LLM 负责：
+  - 翻译 `translated_segments.json`（结构化输出）
+  - 生成 `metadata.json`（结构化输出）
 
-**输出**：`source_subs.srt`
+安全/可控原则（MVP 也建议遵守）：
 
----
-
-### 节点 3: 语义处理 (Semantic Processing)
-**目标**：将原文字幕翻译为中文并进行本地化润色。
-
-**Agent 动作**：
-1. 读取 `source_subs.srt`
-2. 执行**思维链 (CoT) 策略**：
-   - 识别专有名词
-   - 决定技术术语/文化梗的翻译策略
-   - 保持时间轴精准对齐
-3. 严格保持 SRT 格式规范
-
-**输出**：`translated_subs.srt`
+- `allowed_tools` 最小化（只开放需要的工具封装）
+- `permission_mode` 显式设置（不要依赖默认值）
+- hooks 记录 `PreToolUse`/`PostToolUse`（日志避免泄露密钥与个人信息）
 
 ---
 
-### 节点 4: 视听工程 (Media Engineering)
-**目标**：稳健完成字幕烧录与基础混音，确保产出可用。
+## 7. Phase 2 Roadmap（非 MVP）
 
-**Agent 动作**：
-1. **资源校验**：确认 `translated_subs.srt` 存在且非空
-2. **字幕烧录 (Hardsub)**：
-   - 使用 FFmpeg `subtitles` 滤镜
-   - 指定中文字体路径（如 `SimHei.ttf`）防止乱码
-3. **背景音合成**：
-   - 从 `assets/bgm/` 选择通用 BGM
-   - 用 `volume=0.1` 压低 BGM 音量
-   - 用 `amix` 混合原声与 BGM
-
-**工具集**：
-```python
-@tool
-def render_standard_video(video_path: str, srt_path: str, bgm_path: str) -> str:
-    """
-    标准 MVP 渲染：烧录字幕 + 低音量 BGM
-    返回最终视频路径
-    """
-    # FFmpeg 复杂滤镜封装
-    filter_complex = (
-        f"[0:v]subtitles='{srt_path}':force_style='Fontname=SimHei,FontSize=24'[v];"
-        "[1:a]volume=0.1[bgm];[0:a][bgm]amix=inputs=2:duration=first[a]"
-    )
-    # 执行命令...
-```
-
-**输出**：`final_output.mp4`
-
----
-
-### 节点 5: 封装与元数据 (Packaging)
-**目标**：基于数据洞察生成高点击率元数据，制定封面策略。
-
-#### 1. 数据源深度解析
-Agent 从 `video.info.json` 提取字段：
-| 字段 | 用途 | 处理策略 |
-|------|------|----------|
-| `title` | 语义理解 | **重写**（基于SEO/点击率逻辑）e.g., "Why EV is failing" → "电动车泡沫破裂？深度解析 EV 行业的至暗时刻" |
-| `description` | 信息提取 | 提取关键点/时间轴/参考链接生成中文摘要 |
-| `tags` | 分类 | 翻译高频标签保证基础分类准确 |
-| `view_count`/`like_count` | 爆款识别 | 若 `view_count/subscriber_count > 5`，严格模仿原标题句式 |
-| `upload_date` | 时效性 | 过滤搬运过时内容 |
-
-#### 2. 封面策略
-| 阶段 | 策略 | 优势 |
-|------|------|------|
-| **MVP (低成本)** | 1. FFmpeg 随机抽取3张高对比度帧2. 无文字遮挡时直接使用原缩略图 | 快速实施，零额外成本 |
-| **Phase 2 (原生生成)** | 调用 Kolors/Flux.1 模型生成带中文标题的封面 | • 极简架构（单API调用）• 文字/画面光影融合自然• 成本低于 $0.01/张 |
-
-**Prompt 模板**：
-```prompt
-High quality YouTube thumbnail style. 
-The image features [SCENE: A broken Tesla in a snowy storm, cinematic lighting]. 
-In the center, large bold text written in Chinese says: "[TEXT: 特斯拉趴窝]". 
-Vibrant colors, high contrast, 4k resolution.
-```
-
-**输出**：
-- `metadata.json` (含 title/description/tags)
-- `thumbnail_final.jpg`
-
----
-
-### 节点 6: 通知与交付 (Notification & Handoff)
-**目标**：将产物交付人类创作者，**人工完成上传**（放弃 GUI 自动化）。
-
-**决策依据**：
-- 💰 **成本**：GUI 操作消耗大量 Token（截图+多步操作）
-- 🛡️ **稳定性**：平台前端频繁更新导致脚本失效
-- ⚠️ **风控**：自动化上传易触发机器人检测封号
-
-**Agent 动作**：
-1. 完整性校验：检查 `final_output.mp4`, `metadata.json`, `thumbnail_final.jpg`
-2. 生成交付包：整理至 `workspace/{video_id}/dist/`
-3. 发送通知：
-   ```bash
-   echo "✅ 任务完成！视频已生成于: $OUTPUT_PATH"
-   open $OUTPUT_PATH  # macOS
-   xdg-open $OUTPUT_PATH  # Linux
-   ```
-
-**输出**：终端通知/自动打开文件夹
-
----
-
-## 3. 关键工具封装 (MCP/Skills 定义)
-
-### Skill: `media_processor`
-```python
-@tool
-def render_standard_video(video_path: str, srt_path: str, bgm_path: str) -> str:
-    """标准 MVP 渲染：烧录字幕 + 低音量 BGM"""
-    output_path = video_path.replace(".mp4", "_final.mp4")
-    
-    # 处理路径转义（Windows/Linux）
-    srt_escaped = srt_path.replace('\\', '/').replace(':', '\\:')
-    
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-stream_loop", "-1", "-i", bgm_path,  # 循环 BGM
-        "-filter_complex", 
-        f"[0:v]subtitles={srt_escaped}:force_style='Fontname=SimHei,FontSize=24'[v];"
-        "[1:a]volume=0.1[bgm];[0:a][bgm]amix=inputs=2:duration=first[a]",
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", "libx264", "-c:a", "aac",
-        "-shortest",  # 以视频时长为准
-        output_path
-    ]
-    subprocess.run(cmd, check=True)
-    return output_path
-```
-
-### Skill: `subtitle_generator`
-```python
-@tool
-def transcribe_audio_to_srt(audio_path: str, model_size: str = "large-v3") -> str:
-    """使用 faster-whisper 生成 SRT 字幕"""
-    model = WhisperModel(model_size, device="cuda", compute_type="float16")
-    segments, _ = model.transcribe(audio_path, beam_size=5)
-    
-    output_path = f"{os.path.splitext(audio_path)[0]}.srt"
-    
-    with open(output_path, "w", encoding="utf-8") as f:
-        for i, segment in enumerate(segments, 1):
-            start = format_timestamp(segment.start)
-            end = format_timestamp(segment.end)
-            text = segment.text.strip()
-            
-            f.write(f"{i}\n{start} --> {end}\n{text}\n\n")
-            
-    return output_path
-
-def format_timestamp(seconds: float) -> str:
-    """转换为 SRT 时间戳格式 (HH:MM:SS,mmm)"""
-    hours, remainder = divmod(seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    milliseconds = int((seconds - int(seconds)) * 1000)
-    return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d},{milliseconds:03d}"
-```
-
----
-
-## 4. 扩展模块 (Future Roadmap: Phase 2)
-
-### 模块 A: 病毒式开头生成器 (Viral Hook Engine)
-**目标**：自动识别高光时刻并前置，提升完播率。
-
-**技术方案**：
-| 策略 | 实现方式 | 优势 |
-|------|----------|------|
-| **A (评论热力图)** | 正则提取评论时间戳，统计密度最高的10秒区间 | 基于真实用户兴趣 |
-| **B (语义兜底)** | 当评论不足时，分析 SRT 文本的情绪强度（惊叹/转折） | 保证基础可行性 |
-
-**预留技能**：
-```python
-@tool
-def suggest_hook_timestamp(info_json_path: str) -> dict:
-    """基于评论分析高光时刻"""
-    with open(info_json_path) as f:
-        data = json.load(f)
-    
-    # 提取时间戳 (e.g., "1:23" → 83秒)
-    timestamps = []
-    pattern = re.compile(r'(\d{1,2}):(\d{2})')
-    
-    for comment in data.get('comments', []):
-        matches = pattern.findall(comment.get('text', ''))
-        timestamps.extend([int(m[0])*60 + int(m[1]) for m in matches])
-    
-    # 聚合10秒区间
-    if timestamps:
-        bucket = Counter(t//10 for t in timestamps).most_common(1)[0][0]
-        return {"found": True, "start": bucket*10, "end": bucket*10+10}
-    
-    return {"found": False, "reason": "No valid timestamps"}
-```
-
----
-
-## 5. 商业落地可行性 Checklist
-
-| 风险点 | 优化方案 | 优先级 |
-|--------|----------|--------|
-| **Token 成本** | • SRT 分批处理• 元数据预过滤 | ⭐⭐⭐⭐ |
-| **FFmpeg 容错** | • Docker 预装中文字体• 文件存在性校验 | ⭐⭐⭐⭐ |
-| **平台风控** | • MVP 阶段坚持人工上传• 模拟人类操作间隔 | ⭐⭐⭐⭐⭐ |
-| **翻译质量** | • 专有名词白名单• 人工抽样审核 | ⭐⭐⭐ |
-| **BGM 版权** | • 使用免版税音乐库• 音量严格限制在0.1 | ⭐⭐⭐⭐ |
+- BGM 可检索素材库 + 基于内容的选择策略
+- 关键词搜索补充（非白名单频道）
+- 病毒式开头（高光时刻前置）
+- 更严格的视频质量检查（黑屏/无声/字幕覆盖率/响度指标）

@@ -1,0 +1,20 @@
+timezone: Asia/Shanghai
+
+max_videos_per_run: 1
+max_duration_seconds: 300
+retries_max: 5
+
+channels:
+  - ChinesewithJessie
+
+paths:
+  workspace: workspace
+  jobs_dir: workspace/jobs
+  deliveries_dir: workspace/deliveries
+  state_dir: workspace/state
+  logs_dir: workspace/logs
+
+render:
+  font_path: /usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc
+  subtitle_fontsize: 24
+  bgm_path: null
