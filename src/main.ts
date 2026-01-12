@@ -12,7 +12,7 @@ function readArg(flag: string): string | undefined {
 }
 
 async function main() {
-  loadEnv();
+  loadEnv({ override: true });
   const configPath = readArg("--config") ?? process.env.APP_CONFIG ?? "config.yaml";
   const config = loadConfig(configPath);
 

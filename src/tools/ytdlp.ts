@@ -56,7 +56,9 @@ export async function preflight(videoUrl: string): Promise<PreflightResult> {
   const result = await runCommand(
     "yt-dlp",
     ["--dump-json", "--skip-download", videoUrl],
-    { timeoutMs: DEFAULT_TIMEOUT_MS }
+    // yt-dlp JSON for YouTube can be much larger than a few KB; keep this high enough
+    // to avoid truncation causing JSON.parse failures.
+    { timeoutMs: DEFAULT_TIMEOUT_MS, maxOutputChars: 2_000_000 }
   );
 
   if (result.exitCode !== 0 || !result.stdout) {
@@ -65,8 +67,15 @@ export async function preflight(videoUrl: string): Promise<PreflightResult> {
     );
   }
 
-  const info = JSON.parse(result.stdout) as YtDlpInfo;
-  return normalizePreflight(info, videoUrl);
+  try {
+    const info = JSON.parse(result.stdout) as YtDlpInfo;
+    return normalizePreflight(info, videoUrl);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Failed to parse yt-dlp JSON output (stdoutLength=${result.stdout.length}): ${message}`
+    );
+  }
 }
 
 export function preflightPasses(
@@ -139,4 +148,42 @@ export async function download(
 
   const jsonPath = path.join(outputDir, "video.info.json");
   writeJson(jsonPath, {});
+}
+
+/**
+ * Resolve a channel handle (e.g. @Handle) to a Channel ID (UC...) using yt-dlp.
+ * If the input already looks like a Channel ID (starts with UC), returns it as-is.
+ */
+export async function resolveChannelId(handleOrId: string): Promise<string> {
+  // Already a Channel ID?
+  if (handleOrId.startsWith("UC")) {
+    return handleOrId;
+  }
+
+  // Assume it's a handle (with or without @)
+  const handle = handleOrId.startsWith("@") ? handleOrId : `@${handleOrId}`;
+  // Fetch first video's metadata and print ONLY channel_id
+  const url = `https://www.youtube.com/${handle}/videos`;
+
+  const result = await runCommand(
+    "yt-dlp",
+    [
+      "--print", "channel_id",
+      "--playlist-items", "1",
+      "--skip-download",
+      url
+    ],
+    { timeoutMs: 60000 }
+  );
+
+  if (result.exitCode !== 0 || !result.stdout) {
+    throw new Error(`Failed to resolve channel handle ${handle}: ${result.stderr || "No output from yt-dlp"}`);
+  }
+
+  const channelId = result.stdout.trim();
+  if (channelId.startsWith("UC")) {
+    return channelId;
+  }
+
+  throw new Error(`Invalid channel_id resolved: ${channelId}`);
 }

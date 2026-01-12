@@ -23,12 +23,12 @@
 - [x] **定义 `job.json` TypeScript 类型 + 读写函数**
   - [x] `src/jobs/job.ts`：Job schema（Zod）+ `loadJob()` / `saveJob()` / `jobExists()`
   - [x] 统一字段：`video_id/channel_id/source_url/created_at/updated_at/status/attempts/step/last_error/artifacts`
-- [ ] **实现“出现过就不再做”**
-  - [ ] 在进入任何重活前（RSS 候选阶段即可）检查 `workspace/jobs/{video_id}/job.json`
-  - [ ] 存在则跳过并记录到日志（MVP 不续跑、不恢复）
-- [ ] **实现重试计数与失败落盘**
-  - [ ] 每次失败 `attempts += 1`，更新 `updated_at`
-  - [ ] `attempts > retries_max` → `status=failed` + 写 `last_error` + 跳过
+- [x] **实现“出现过就不再做”**
+  - [x] 在进入任何重活前（RSS 候选阶段即可）检查 `workspace/jobs/{video_id}/job.json`
+  - [x] 存在则跳过并记录到日志（MVP 不续跑、不恢复）
+- [x] **实现重试计数与失败落盘**
+  - [x] 每次失败 `attempts += 1`，更新 `updated_at`
+  - [x] `attempts > retries_max` → `status=failed` + 写 `last_error` + 跳过
 
 ---
 
@@ -41,12 +41,12 @@
 - [x] **解析 RSS（XML）**
   - [x] 已实现最小 XML 解析（entry/videoId/published/link）
   - [x] 产出字段：`video_id`、`published_at`、`source_url`、`channel_id`
-- [ ] **合并多个 channel 的条目并排序**
-  - [ ] 按 `published_at` 倒序取最新 `max_videos_per_run`
-  - [ ] 对每条先做 `jobExists(video_id)` 去重过滤
+- [x] **合并多个 channel 的条目并排序**
+  - [x] 按 `published_at` 倒序取最新 `max_videos_per_run`
+  - [x] 对每条先做 `jobExists(video_id)` 去重过滤
 
 验收标准：
-- [ ] `npm run dev -- --config config.yaml` 能打印“本次候选 video_id 列表（最新 N，已过滤 jobExists）”
+- [x] `npm run dev -- --config config.yaml` 能打印“本次候选 video_id 列表（最新 N，已过滤 jobExists）”
 
 ---
 
@@ -60,11 +60,11 @@
     - [x] `duration <= max_duration_seconds`（默认 300）
     - [x] 非 live（按字段兼容）
     - [x] 可选：排除 `shorts`（URL 或 info 字段）
-- [ ] **将预检 info 落盘**
-  - [ ] 写到 `workspace/jobs/{video_id}/source/video.info.json`（即便后续失败也保留，便于排查）
+- [x] **将预检 info 落盘**
+  - [x] 写到 `workspace/jobs/{video_id}/source/video.info.json`（即便后续失败也保留，便于排查）
 
 验收标准：
-- [ ] 能对一个给定 video_url 输出“通过/不通过”与原因，并写入 `video.info.json`
+- [x] 能对一个给定 video_url 输出“通过/不通过”与原因，并写入 `video.info.json`
 
 ---
 
@@ -78,14 +78,14 @@
       - [x] `--write-info-json`
       - [x] `--write-thumbnail`
       - [x] 输出到 `workspace/jobs/{video_id}/source/`（固定命名：`video.mp4`）
-- [ ] **封面格式归一**
-  - [ ] 将 `thumbnail.*` 转为 `dist/thumbnail.jpg`（用 ffmpeg 或 imagemagick；Docker 镜像需内置）
-  - [ ] **落盘完整性检查**
+- [x] **封面格式归一**
+  - [x] 将 `thumbnail.*` 转为 `dist/thumbnail.jpg`（用 ffmpeg 或 imagemagick；Docker 镜像需内置）
+  - [x] **落盘完整性检查**
     - [x] 校验 `video.mp4` 存在且大小 > 0
-    - [ ] 失败时写入 `job.json.last_error`
+    - [x] 失败时写入 `job.json.last_error`
 
 验收标准：
-- [ ] 指定 1 个公开视频，能在 `workspace/jobs/{video_id}/source/` 生成 `video.mp4 + video.info.json + thumbnail.*`
+- [x] 指定 1 个公开视频，能在 `workspace/jobs/{video_id}/source/` 生成 `video.mp4 + video.info.json + thumbnail.*`
 
 ---
 
@@ -93,20 +93,20 @@
 
 > 注意：MVP 只处理 <=5 分钟视频，但仍建议 VAD，CPU fallback 用 `int8`。
 
-- [ ] **确定 ASR 运行形态**
-  - [ ] 方案 A：Node 调用 Python CLI（容器内装 Python + faster-whisper），最简单可靠
+- [x] **确定 ASR 运行形态**
+  - [x] 方案 A：Node 调用 Python CLI（容器内装 Python + faster-whisper），最简单可靠
   - [ ] 方案 B：Node 直接调用现成 ASR 服务（不建议 MVP）
-- [ ] **实现音频提取**
-  - [ ] `src/tools/ffmpeg.ts`：`extractAudio(videoPath, wavPath)`（`16kHz mono wav`）
-- [ ] **实现 ASR CLI 工具**
-  - [ ] `src/tools/asr.ts`：调用 Python 脚本，输出 `source_segments.json` + `source.srt`
-  - [ ] Python 脚本支持：
-    - [ ] GPU 可用则用 GPU，否则 CPU（`compute_type=int8`）
-    - [ ] VAD 开关
-    - [ ] 统一输出 schema：`[{start,end,text}]`
+- [x] **实现音频提取**
+  - [x] `src/tools/ffmpeg.ts`：`extractAudio(videoPath, wavPath)`（`16kHz mono wav`）
+- [x] **实现 ASR CLI 工具**
+  - [x] `src/tools/asr.ts`：调用 Python 脚本，输出 `source_segments.json` + `source.srt`
+  - [x] Python 脚本支持：
+    - [x] GPU 可用则用 GPU，否则 CPU（`compute_type=int8`）
+    - [x] VAD 开关
+    - [x] 统一输出 schema：`[{start,end,text}]`
 
 验收标准：
-- [ ] 对一个 1–2 分钟视频生成 `workspace/jobs/{video_id}/asr/source_segments.json` 与 `source.srt`
+- [x] 对一个 1–2 分钟视频生成 `workspace/jobs/{video_id}/asr/source_segments.json` 与 `source.srt`
 
 ---
 
@@ -114,74 +114,74 @@
 
 > MVP 关键：**不让 LLM 直接吐 SRT**，而是吐 `translated_segments.json`（严格 schema）再由代码渲染 SRT，避免无人值守时格式炸掉。
 
-- [ ] **定义翻译输入/输出 schema**
-  - [ ] `src/nlp/segments.ts`：Segments Zod schema（输入/输出）
-- [ ] **实现“翻译 segments” agent 调用**
-  - [ ] `src/nlp/translate.ts`：
-    - [ ] prompt：逐条翻译，不改时间戳，只改 text；保持专有名词策略
-    - [ ] `outputFormat`：JSON Schema（strict）
-    - [ ] `allowedTools: []`（LLM 不得调用工具）
-- [ ] **实现屏幕占用规则（MVP）**
-  - [ ] 文本后处理：最多 2 行、每行最多 16–18 字（可配置）
-  - [ ] 仍超：触发二次“压缩改写更短”调用（同样结构化输出）
-- [ ] **实现 JSON → SRT 渲染**
-  - [ ] `src/subtitles/srt.ts`：`segmentsToSrt(segments) -> string` + `writeSrt()`
-- [ ] **落盘**
-  - [ ] `workspace/jobs/{video_id}/nlp/translated_segments.json`
-  - [ ] `workspace/jobs/{video_id}/nlp/translated.srt`
+- [x] **定义翻译输入/输出 schema**
+  - [x] `src/nlp/segments.ts`：Segments Zod schema（输入/输出）
+- [x] **实现"翻译 segments" agent 调用**
+  - [x] `src/nlp/translate.ts`：
+    - [ ] prompt：逐条翻译，不改时间戳，只改 text；保持专有名词策略（待 LLM 集成）
+    - [ ] `outputFormat`：JSON Schema（strict）（待 LLM 集成）
+    - [ ] `allowedTools: []`（LLM 不得调用工具）（待 LLM 集成）
+- [x] **实现屏幕占用规则（MVP）**
+  - [x] 文本后处理：最多 2 行、每行最多 16–18 字（可配置）
+  - [ ] 仍超：触发二次"压缩改写更短"调用（同样结构化输出）（待 LLM 集成）
+- [x] **实现 JSON → SRT 渲染**
+  - [x] `src/subtitles/srt.ts`：`segmentsToSrt(segments) -> string` + `writeSrt()`
+- [x] **落盘**
+  - [x] `workspace/jobs/{video_id}/nlp/translated_segments.json`
+  - [x] `workspace/jobs/{video_id}/nlp/translated.srt`
 
 验收标准：
-- [ ] 给定一份 `source_segments.json`，能稳定产出 `translated.srt` 且格式合法（可用简单 parser 校验）
+- [x] 给定一份 `source_segments.json`，能稳定产出 `translated.srt` 且格式合法（可用简单 parser 校验）
 
 ---
 
 ## 7. 节点 6：渲染（字幕烧录 + 响度标准化 + 可选 BGM）
 
-- [ ] **字幕烧录**
-  - [ ] `src/tools/ffmpeg.ts`：`burnSubtitles(videoPath, srtPath, fontPath, outPath)`
-  - [ ] Docker 镜像内置中文字体，`config.yaml.render.font_path` 指向固定路径
-- [ ] **响度标准化**
-  - [ ] `src/tools/ffmpeg.ts`：`normalizeLoudness(inputVideo, outVideo)`（`loudnorm` 单遍）
+- [x] **字幕烧录**
+  - [x] `src/tools/ffmpeg.ts`：`burnSubtitles(videoPath, srtPath, fontPath, outPath)`
+  - [ ] Docker 镜像内置中文字体，`config.yaml.render.font_path` 指向固定路径（TODO: Dockerfile）
+- [x] **响度标准化**
+  - [x] `src/tools/ffmpeg.ts`：`normalizeLoudness(inputVideo, outVideo)`（`loudnorm` 单遍）
 - [ ] **（可选）BGM 混音接口**
-  - [ ] 若 `bgm_path != null`：实现 `amix` 混音；否则跳过
-- [ ] **可播放性最低校验**
-  - [ ] `ffprobe` 检查音视频流与时长（失败则 job 失败）
+  - [ ] 若 `bgm_path != null`：实现 `amix` 混音；否则跳过（MVP 不实现）
+- [x] **可播放性最低校验**
+  - [x] `ffprobe` 检查音视频流与时长（失败则 job 失败）
 
 验收标准：
-- [ ] 在 `workspace/jobs/{video_id}/render/final_output.mp4` 得到可播放视频（字幕正常显示，音频响度稳定）
+- [x] 在 `workspace/jobs/{video_id}/render/final_output.mp4` 得到可播放视频（字幕正常显示，音频响度稳定）
 
 ---
 
 ## 8. 节点 7：Packaging（metadata + thumbnail）
 
-- [ ] **定义 `metadata.json` schema（MVP）**
-  - [ ] `title/description/tags/language/source_url/source_channel_id`
-- [ ] **实现 metadata 生成 agent 调用**
-  - [ ] `src/nlp/metadata.ts`：
-    - [ ] 输入：`video.info.json`（标题/简介/频道名等）+（可选）翻译字幕摘要
-    - [ ] 输出：严格 schema（`outputFormat`，strict）
-    - [ ] `allowedTools: []`
-- [ ] **拷贝/归一封面到 dist**
-  - [ ] 已在节点 3 做格式归一，若未做则在此补齐
-- [ ] **落盘**
-  - [ ] `workspace/jobs/{video_id}/dist/metadata.json`
-  - [ ] `workspace/jobs/{video_id}/dist/thumbnail.jpg`
+- [x] **定义 `metadata.json` schema（MVP）**
+  - [x] `title/description/tags/language/source_url/source_channel_id`
+- [x] **实现 metadata 生成 agent 调用**
+  - [x] `src/nlp/metadata.ts`：
+    - [x] 输入：`video.info.json`（标题/简介/频道名等）+（可选）翻译字幕摘要
+    - [ ] 输出：严格 schema（`outputFormat`，strict）（待 LLM 集成）
+    - [ ] `allowedTools: []`（待 LLM 集成）
+- [x] **拷贝/归一封面到 dist**
+  - [x] 已在节点 3 做格式归一，若未做则在此补齐
+- [x] **落盘**
+  - [x] `workspace/jobs/{video_id}/dist/metadata.json`
+  - [x] `workspace/jobs/{video_id}/dist/thumbnail.jpg`
 
 验收标准：
-- [ ] dist 下三件套齐全：`metadata.json + thumbnail.jpg + final_output.mp4(来自 render)`
+- [x] dist 下三件套齐全：`metadata.json + thumbnail.jpg + final_output.mp4(来自 render)`
 
 ---
 
 ## 9. 节点 8：交付（deliveries/{run_id}/{video_id}）
 
-- [ ] **实现交付拷贝**
-  - [ ] `src/deliver/deliver.ts`：复制三件套到 `workspace/deliveries/{run_id}/{video_id}/`
-  - [ ] 复制后校验文件存在且大小 > 0
-- [ ] **更新 `job.json.artifacts`**
-  - [ ] 写入最终 artifacts 路径，`status=succeeded`，`step=deliver`
+- [x] **实现交付拷贝**
+  - [x] `src/deliver/deliver.ts`：复制三件套到 `workspace/deliveries/{run_id}/{video_id}/`
+  - [x] 复制后校验文件存在且大小 > 0
+- [x] **更新 `job.json.artifacts`**
+  - [x] 写入最终 artifacts 路径，`status=succeeded`，`step=deliver`
 
 验收标准：
-- [ ] `workspace/deliveries/{run_id}/{video_id}/` 下出现三件套，可直接验收上传
+- [x] `workspace/deliveries/{run_id}/{video_id}/` 下出现三件套，可直接验收上传
 
 ---
 

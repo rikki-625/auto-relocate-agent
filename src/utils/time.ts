@@ -39,3 +39,8 @@ export function buildRunId(timezone: string): string {
 
   return `${year}${month}${day}_${hour}${minute}${second}${offset}`;
 }
+
+export function nowIso(): string {
+  return new Date().toISOString();
+}
+

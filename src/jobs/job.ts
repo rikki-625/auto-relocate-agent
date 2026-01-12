@@ -61,3 +61,37 @@ export function createJob(params: {
     artifacts: {}
   };
 }
+
+export function incrementAttempts(job: Job, error: string, now: string): Job {
+  return {
+    ...job,
+    attempts: job.attempts + 1,
+    last_error: error,
+    updated_at: now
+  };
+}
+
+export function markFailed(job: Job, now: string): Job {
+  return {
+    ...job,
+    status: "failed",
+    updated_at: now
+  };
+}
+
+export function markSucceeded(job: Job, step: string, now: string): Job {
+  return {
+    ...job,
+    status: "succeeded",
+    step,
+    updated_at: now
+  };
+}
+
+export function updateStep(job: Job, step: string, now: string): Job {
+  return {
+    ...job,
+    step,
+    updated_at: now
+  };
+}
