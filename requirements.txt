@@ -1,0 +1,2 @@
+faster-whisper>=0.10.0
+torch>=2.0.0 --index-url https://download.pytorch.org/whl/cu118

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { runCommand } from "../tools/command.js";
 
 type LoadEnvOptions = {
   path?: string;
@@ -51,4 +52,48 @@ export function loadEnv(options: LoadEnvOptions = {}): void {
       process.env[parsed.key] = parsed.value;
     }
   }
+}
+
+export type EnvSnapshot = {
+  node: string;
+  python: string | null;
+  ffmpeg: string | null;
+  ytdlp: string | null;
+  timestamp: string;
+};
+
+/**
+ * Get version string from a command output
+ */
+export async function getCommandVersion(command: string, args: string[]): Promise<string | null> {
+  try {
+    const result = await runCommand(command, args, { timeoutMs: 5000 });
+    if (result.exitCode === 0 && result.stdout) {
+      // Return first line usually containing version
+      const firstLine = result.stdout.split('\n')[0].trim();
+      return firstLine || null;
+    }
+  } catch {
+    // Ignore errors, tool might be missing
+  }
+  return null;
+}
+
+/**
+ * Capture current environment snapshot
+ */
+export async function getEnvSnapshot(): Promise<EnvSnapshot> {
+  const [python, ffmpeg, ytdlp] = await Promise.all([
+    getCommandVersion("python", ["--version"]),
+    getCommandVersion("ffmpeg", ["-version"]),
+    getCommandVersion("yt-dlp", ["--version"]),
+  ]);
+
+  return {
+    node: process.version,
+    python,
+    ffmpeg,
+    ytdlp,
+    timestamp: new Date().toISOString()
+  };
 }

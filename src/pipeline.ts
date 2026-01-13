@@ -21,6 +21,7 @@ import { runMetadataGeneration } from "./nlp/metadata.js";
 import { buildArtifacts, deliverJob } from "./deliver/deliver.js";
 import { ensureDir, writeJson } from "./utils/fs.js";
 import { nowIso } from "./utils/time.js";
+import { getEnvSnapshot } from "./utils/env.js";
 
 type Logger = {
   info: (msg: string) => void;
@@ -148,6 +149,17 @@ export async function processSingleVideo(
     logger.info(`[${videoId}] Running preflight check...`);
     job = updateStep(job, "preflight", nowIso());
     saveJob(jobFilePath, job);
+
+    // Save environment snapshot
+    try {
+      const envSnapshot = await getEnvSnapshot();
+      const snapshotPath = path.join(jobsDir, videoId, "env_snapshot.json");
+      ensureDir(path.dirname(snapshotPath));
+      writeJson(snapshotPath, envSnapshot);
+      logger.info(`[${videoId}] Environment snapshot saved`);
+    } catch (e) {
+      logger.warn(`[${videoId}] Failed to save env snapshot: ${e}`);
+    }
 
     const preflightResult = await preflight(sourceUrl);
 

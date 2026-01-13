@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/main.ts",
+    "dev": "npm run check-env && tsx src/main.ts",
+    "check-env": "tsx scripts/check_env.ts",
     "smoke": "tsx src/smoke.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js"
